@@ -141,3 +141,47 @@ for (i = 0; i < 10) {
 **Justificativa:** a produção de `for` exige exatamente três cláusulas separadas por `;`:
 `for ( atribuicao ';' expressao ';' atribuicao ')' bloco`.
 A inicialização `i = 0` e a condição `i < 10` existem, mas falta a cláusula obrigatória de atualização `i = i + 1`. Assim, a entrada viola a gramática dos laços e é sintaticamente inválida.
+
+## Implementação do lexer
+
+### Relação entre expressões regulares, autômatos finitos e implementação
+
+Os padrões léxicos da MiniLang são linguagens regulares. Os identificadores são descritos por `[A-Za-z_][A-Za-z0-9_]*`, os inteiros por `[0-9]+` e os comentários por `//[^\n]*`. O ponto especial é o prefixo de dois caracteres dos operadores `<=`, `>=`, `==` e `!=`.
+
+A implementação em `src/lexer.py` usa estados realizados de forma procedural: estado inicial, identificador, inteiro, comentário, operador/pontuação e erro. Os estados de aceitação são realizados pela emissão de `Token`, acompanhada da linha e da coluna.
+
+O autômato reconhece exatamente os padrões da linguagem:
+
+- Em identificadores, somente letras ASCII são aceitas; dígitos e `_` podem continuar o token.
+- Em inteiros, somente dígitos ASCII continuam o token. Letras ou `_` imediatamente após um número geram `Número mal formado`, pois `1x` não é válido.
+- Ao reconhecer `//`, o texto é ignorado até `\n` ou EOF.
+- Comentários `/* ... */` não pertencem à linguagem e são rejeitados.
+- Caracteres não ASCII, como `ç`, e símbolos fora do alfabeto, como `@`, são rejeitados.
+
+### Tabela de transições do léxico
+
+Os estados são: `S` inicial, `I` inteiro, `A` identificador, `C` comentário, `O` operador/pontuação, `E` erro e `F` fim.
+
+| Estado atual | Entrada | Próximo estado / ação |
+|---|---|---|
+| S | espaço, `\t`, `\r`, `\n` | S; consumir |
+| S | `/` seguido de `/` | C; ignorar até fim da linha |
+| S | `/` seguido de `*` | E; comentário de bloco não permitido |
+| S | `[A-Za-z_]` | A; iniciar identificador |
+| S | `[0-9]` | I; iniciar inteiro |
+| S | `<=`, `>=`, `==`, `!=` | O; emitir token composto |
+| S | `<`, `>`, `+`, `-`, `*`, `/`, `=`, `(`, `)`, `{`, `}`, `;` | O; emitir token simples |
+| S | caractere fora do alfabeto | E; `Caractere inesperado` |
+| S | EOF | F; emitir `EOF` |
+| A | `[A-Za-z0-9_]` | A; continuar identificador |
+| A | outro caractere/EOF | aceita IDENT ou palavra reservada; retorna a S |
+| I | `[0-9]` | I; continuar inteiro |
+| I | letra ASCII ou `_` | E; `Número mal formado` |
+| I | outro caractere/EOF | aceita INT; retorna a S |
+| C | caractere diferente de `\n` | C; consumir |
+| C | `\n` | S; terminar comentário |
+| C | EOF | F; comentário de linha termina normalmente |
+| O | símbolo reconhecido | aceita o token correspondente; retorna a S |
+| E | — | rejeita a cadeia com linha e coluna |
+
+As transições usam leitura maximal: inteiros e identificadores continuam até encontrar outro tipo de caractere. Depois da leitura, as palavras reservadas são reconhecidas pelo valor exato da cadeia; toda outra cadeia válida vira `IDENT`.
