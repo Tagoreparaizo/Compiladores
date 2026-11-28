@@ -26,3 +26,70 @@ Se o token inteiro contém apenas dígitos, é emitido `INT`. Se o identificador
 
 Essa justificativa usa a equivalência entre expressões regulares e autômatos finitos. Todo padrão utilizado possui uma representação regular, e a execução do analisador corresponde à aceitação desses padrões. Assim, o lexer não necessita de contexto sintático para classificar os tokens. Erros léxicos são detectados antes da análise sintática e incluem linha e coluna para diagnóstico. Foram testadas entradas válidas e inválidas, como `@`, `1x` e comentário não fechado ou não permitido.
 
+## Letra (c) — Análise sintática
+
+### Técnica adotada: descendente recursivo
+
+O parser foi implementado em `src/parser.py` com a técnica descendente recursiva. Cada produção não terminal da gramática EBNF corresponde a um método: `parse_expression`, `parse_comparison`, `parse_additive`, `parse_multiplicative`, `parse_unary` e `parse_primary`. Os métodos correspondentes aos comandos verificam os tokens `PRINT`, `IF`, `WHILE`, `FOR`, `IDENT` e `LBRACE`, enquanto blocos são reconhecidos por `parse_body` e `parse_block_from_opening`.
+
+Essa técnica é compatível com a gramática construída no item (a), pois ela não possui recursão à esquerda. Em particular, as produções repetitivas das operações são implementadas por laços `while`, enquanto os operadores unários usam recursão à direita em `parse_unary`. O token atual é analisado por inspeção direta e, após o reconhecimento de um símbolo terminal, o método `advance` avança a posição da entrada.
+
+### Árvore sintática de `1 + 2 * 3`
+
+A expressão é analisada com a árvore abaixo:
+
+```text
++
+├── 1
+└── *
+    ├── 2
+    └── 3
+```
+
+### Árvore sintática de `(1 + 2) * 3`
+
+Os parênteses fazem a adição tornar-se o operando esquerdo da multiplicação:
+
+```text
+*
+├── +
+│   ├── 1
+│   └── 2
+└── 3
+```
+
+As duas árvores são diferentes porque o primeiro caso aplica a precedência natural, na qual `*` liga os operandos `2` e `3` antes da soma com `1`. No segundo caso, `parse_primary` reconhece `(expressão)` e força a soma a ser calculada antes da multiplicação. Portanto, a posição dos parênteses altera diretamente a forma da árvore.
+
+### Precedência e associatividade
+
+A precedência é implementada pela separação das chamadas: `parse_comparison` chama `parse_additive`, que chama `parse_multiplicative`, que chama `parse_unary`, e esta chama `parse_primary`. Assim, multiplicação e divisão são processadas antes da adição e subtração, e estas são processadas antes da comparação.
+
+Os operadores binários aditivos, multiplicativos e comparativos são associativos à esquerda. Por exemplo, `1 - 2 - 3` forma `(- (- 1 2) 3)`, pois cada repetição constrói um novo nó binário tendo o resultado anterior como operando esquerdo. Os operadores unários `+` e `-` são associativos à direita, pois `parse_unary` chama novamente `parse_unary` após consumir o operador.
+
+### Reconhecimento de `while` e `for`
+
+O comando `while` reconhece exatamente `WHILE`, `LPAREN`, uma expressão inteira, `RPAREN` e um corpo. O corpo pode ser um bloco ou um único comando. Seu nó da AST contém a condição e o corpo.
+
+O comando `for` exige todas as cláusulas: `for (`, atribuição de inicialização, `;`, expressão de condição, `;`, atribuição de atualização e `)`. A árvore representa separadamente:
+
+```text
+For
+├── inicialização: i = 0
+├── condição: i < 5
+├── atualização: i = i + 1
+└── corpo
+    └── Print(i)
+```
+
+As três partes são obrigatórias. Assim, uma entrada como `for (i = 0; i < 10) { ... }` é rejeitada ao faltar o segundo separador `;` e a cláusula de atualização. Laços com atualização vazia, condição vazia ou inicialização vazia também são rejeitados pela implementação atual.
+
+### Rejeição das entradas inválidas
+
+O parser lança `ParserError` com linha e coluna quando encontra uma construção incompatível com a gramática. Exemplos cobertos pelos testes são expressão incompleta como `x = (1 + ;`, parênteses não fechados, atribuição sem `;`, `for` sem cláusula de atualização, `for` sem `)` e bloco não fechado. A entrada `x = (1 + ;` é rejeitada em `parse_primary`, pois após o operador `+` o token encontrado é `SEMI`, que não inicia uma expressão primária.
+
+### Comparação com uma técnica alternativa
+
+Uma técnica alternativa seria o analisador LR, que constrói tabelas de análise a partir de gramáticas com mais expressividade e pode lidar com uma família maior de gramáticas. Sua vantagem é detectar diferentes conflitos e processar gramáticas maiores de forma eficiente. Porém, exige uma infraestrutura de estados e tabelas, muitas vezes gerada por ferramentas, o que torna a implementação menos transparente para um projeto didático inicial.
+
+Os métodos descendentes recursivos foram escolhidos porque a gramática da MiniLang é pequena, estruturada e não possui recursão à esquerda. Essa decisão permite relacionar diretamente cada produção da EBNF a uma função e facilita a compreensão, demonstração e depuração dos resultados.
+
